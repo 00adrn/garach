@@ -1,4 +1,4 @@
-package server
+package client
 
 import (
 	"encoding/binary"
@@ -19,28 +19,19 @@ const maxPacketSize = 65535
 func Start() {
 	godotenv.Load()
 
-	listener, err := makeListener()
+	tun, err := makeTun("192.168.9.10")
 	if err != nil {
-		fmt.Printf("Error creating listener: %v\n", err)
+		fmt.Printf("Error creating client TUN interface: %v\n", err)
 		return
 	}
-	defer listener.Close()
 
-	conn, err := listener.Accept()
+	conn, err := makeConnection()
 	if err != nil {
-		fmt.Printf("Error accepting connection: %v\n", err)
+		fmt.Printf("Error creating client connection: %v\n", err)
 		return
 	}
+
 	defer conn.Close()
-
-	tun, err := makeTun("192.168.9.9")
-	if err != nil {
-		fmt.Printf("Error creating server TUN interface: %v\n", err)
-		return
-	}
-
-	fmt.Printf("Server listening on %s\n", listener.Addr().String())
-
 	go listen(conn, tun)
 	go listenIfce(conn, tun)
 
@@ -51,7 +42,7 @@ func makeTun(ip string) (*water.Interface, error) {
 	config := water.Config{
 		DeviceType: water.TUN,
 	}
-	config.Name = os.Getenv("SERVER_GVPN_TUN_NAME")
+	config.Name = os.Getenv("CLIENT_GVPN_TUN_NAME")
 
 	ifce, err := water.New(config)
 	if err != nil {
@@ -62,51 +53,53 @@ func makeTun(ip string) (*water.Interface, error) {
 	fmt.Printf("Created TUN Interface with name: %s\n", ifce.Name())
 	out, err := cmd.Exec(fmt.Sprintf("sudo ip addr add %s/24 dev %s", ip, ifce.Name()))
 	if err != nil {
-		fmt.Printf("Error adding IP address: %s\n", out)
+		fmt.Printf("client tun error adding IP address: %s\n", out)
 		return nil, err
 	}
 
 	out, err = cmd.Exec(fmt.Sprintf("sudo ip link set dev %s up", ifce.Name()))
 	if err != nil {
-		fmt.Printf("Error setting interface up: %s\n", out)
+		fmt.Printf("client tun starting error: %s\n", out)
 		return nil, err
 	}
 
 	return ifce, nil
 }
 
-func listenIfce(conn net.Conn, ifce *water.Interface) {
-	fmt.Printf("Now listening on interface '%s'\n", ifce.Name())
-	packet := make([]byte, maxPacketSize)
+func makeConnection() (net.Conn, error) {
+	address := os.Getenv("CLIENT_GVPN_SERVER_ADDR")
 
+	return net.Dial("tcp", address)
+}
+
+func listen(conn net.Conn, ifce *water.Interface) {
 	for {
-		n, err := ifce.Read(packet)
+		packet, err := readPacket(conn)
 		if err != nil {
-			fmt.Printf("Error reading packet: %v\n", err)
+			fmt.Printf("client connection read error: %v\n", err)
 			return
 		}
-
-		fmt.Printf("Read %d bytes from interface '%s'\n", n, ifce.Name())
-		if err = writePacket(conn, packet[:n]); err != nil {
-			fmt.Printf("Error writing packet to connection: %v\n", err)
+		if _, err = ifce.Write(packet); err != nil {
+			fmt.Printf("client interface write error: %v\n", err)
 			return
 		}
 	}
 }
 
-func makeListener() (net.Listener, error) {
-	return net.Listen("tcp", ":"+os.Getenv("SERVER_GVPN_SERVER_PORT"))
-}
+func listenIfce(conn net.Conn, ifce *water.Interface) {
+	fmt.Printf("Client interface '%s' now listening\n", ifce.Name())
+	packet := make([]byte, maxPacketSize)
 
-func listen(conn net.Conn, ifce *water.Interface) {
 	for {
-		message, err := readPacket(conn)
+		n, err := ifce.Read(packet)
 		if err != nil {
-			fmt.Printf("Error reading from connection: %v", err)
+			fmt.Printf("client interface read error: %v\n", err)
 			return
 		}
-		if _, err = ifce.Write(message); err != nil {
-			fmt.Printf("Error writing to interface: %v", err)
+
+		fmt.Printf("Read %d bytes from interface '%s'\n", n, ifce.Name())
+		if err = writePacket(conn, packet[:n]); err != nil {
+			fmt.Printf("client connection write error: %v", err)
 			return
 		}
 	}
@@ -116,14 +109,11 @@ func writePacket(conn net.Conn, packet []byte) error {
 	if len(packet) > maxPacketSize {
 		return fmt.Errorf("packet too large: %d bytes", len(packet))
 	}
-
 	header := make([]byte, 4)
 	binary.BigEndian.PutUint32(header, uint32(len(packet)))
-
 	if err := writeAll(conn, header); err != nil {
 		return err
 	}
-
 	return writeAll(conn, packet)
 }
 
@@ -133,7 +123,6 @@ func writeAll(conn net.Conn, data []byte) error {
 		if err != nil {
 			return err
 		}
-
 		if written == 0 {
 			return io.ErrShortWrite
 		}
@@ -147,14 +136,11 @@ func readPacket(conn net.Conn) ([]byte, error) {
 	if _, err := io.ReadFull(conn, header); err != nil {
 		return nil, err
 	}
-
 	length := binary.BigEndian.Uint32(header)
 	if length > maxPacketSize {
 		return nil, fmt.Errorf("packet too large: %d bytes", length)
 	}
-
 	packet := make([]byte, length)
 	_, err := io.ReadFull(conn, packet)
-
 	return packet, err
 }
