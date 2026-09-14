@@ -20,6 +20,8 @@ func Start() {
 	godotenv.Load(".env")
 
 	tun, err := makeTun("192.168.9.10")
+
+	fmt.Printf("Created TUN Interface with name: %s\n", tun.Name())
 	if err != nil {
 		fmt.Printf("Error creating client TUN interface: %v\n", err)
 		return
@@ -43,6 +45,9 @@ func makeTun(ip string) (*water.Interface, error) {
 		DeviceType: water.TUN,
 	}
 	config.Name = os.Getenv("CLIENT_GVPN_TUN_NAME")
+	if config.Name == "" {
+		config.Name = "gvpn-client-tun"
+	}
 
 	ifce, err := water.New(config)
 	if err != nil {
@@ -53,13 +58,13 @@ func makeTun(ip string) (*water.Interface, error) {
 	fmt.Printf("Created TUN Interface with name: %s\n", ifce.Name())
 	out, err := cmd.Exec(fmt.Sprintf("sudo ip addr add %s/24 dev %s", ip, ifce.Name()))
 	if err != nil {
-		fmt.Printf("client tun error adding IP address: %s\n", out)
+		fmt.Printf("client TUN error adding IP address: %s\n", out)
 		return nil, err
 	}
 
 	out, err = cmd.Exec(fmt.Sprintf("sudo ip link set dev %s up", ifce.Name()))
 	if err != nil {
-		fmt.Printf("client tun starting error: %s\n", out)
+		fmt.Printf("client TUN starting error: %s\n", out)
 		return nil, err
 	}
 

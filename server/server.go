@@ -52,6 +52,9 @@ func makeTun(ip string) (*water.Interface, error) {
 		DeviceType: water.TUN,
 	}
 	config.Name = os.Getenv("SERVER_GVPN_TUN_NAME")
+	if config.Name == "" {
+		config.Name = "gvpn-server-tun"
+	}
 
 	ifce, err := water.New(config)
 	if err != nil {
