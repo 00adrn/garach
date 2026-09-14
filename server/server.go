@@ -38,7 +38,7 @@ func Start() {
 		fmt.Printf("Error creating server TUN interface: %v\n", err)
 		return
 	}
-
+	fmt.Printf("Created TUN Interface with name: %s\n", tun.Name())
 	fmt.Printf("Server listening on %s\n", listener.Addr().String())
 
 	go listen(conn, tun)
@@ -62,7 +62,6 @@ func makeTun(ip string) (*water.Interface, error) {
 		return nil, err
 	}
 
-	fmt.Printf("Created TUN Interface with name: %s\n", ifce.Name())
 	out, err := cmd.Exec(fmt.Sprintf("sudo ip addr add %s/24 dev %s", ip, ifce.Name()))
 	if err != nil {
 		fmt.Printf("Error adding IP address: %s\n", out)
@@ -78,41 +77,18 @@ func makeTun(ip string) (*water.Interface, error) {
 	return ifce, nil
 }
 
-func listenIfce(conn net.Conn, ifce *water.Interface) {
-	fmt.Printf("Now listening on interface '%s'\n", ifce.Name())
-	packet := make([]byte, maxPacketSize)
-
-	for {
-		n, err := ifce.Read(packet)
+func writeAll(conn net.Conn, data []byte) error {
+	for len(data) > 0 {
+		written, err := conn.Write(data)
 		if err != nil {
-			fmt.Printf("Error reading packet: %v\n", err)
-			return
+			return err
 		}
-
-		fmt.Printf("Read %d bytes from interface '%s'\n", n, ifce.Name())
-		if err = writePacket(conn, packet[:n]); err != nil {
-			fmt.Printf("Error writing packet to connection: %v\n", err)
-			return
+		if written == 0 {
+			return io.ErrShortWrite
 		}
+		data = data[written:]
 	}
-}
-
-func makeListener() (net.Listener, error) {
-	return net.Listen("tcp", ":"+os.Getenv("SERVER_GVPN_SERVER_PORT"))
-}
-
-func listen(conn net.Conn, ifce *water.Interface) {
-	for {
-		message, err := readPacket(conn)
-		if err != nil {
-			fmt.Printf("Error reading from connection: %v", err)
-			return
-		}
-		if _, err = ifce.Write(message); err != nil {
-			fmt.Printf("Error writing to interface: %v", err)
-			return
-		}
-	}
+	return nil
 }
 
 func writePacket(conn net.Conn, packet []byte) error {
@@ -130,21 +106,6 @@ func writePacket(conn net.Conn, packet []byte) error {
 	return writeAll(conn, packet)
 }
 
-func writeAll(conn net.Conn, data []byte) error {
-	for len(data) > 0 {
-		written, err := conn.Write(data)
-		if err != nil {
-			return err
-		}
-
-		if written == 0 {
-			return io.ErrShortWrite
-		}
-		data = data[written:]
-	}
-	return nil
-}
-
 func readPacket(conn net.Conn) ([]byte, error) {
 	header := make([]byte, 4)
 	if _, err := io.ReadFull(conn, header); err != nil {
@@ -160,4 +121,43 @@ func readPacket(conn net.Conn) ([]byte, error) {
 	_, err := io.ReadFull(conn, packet)
 
 	return packet, err
+}
+
+func listen(conn net.Conn, ifce *water.Interface) {
+	for {
+		message, err := readPacket(conn)
+		if err != nil {
+			fmt.Printf("Error reading from connection: %v", err)
+			return
+		}
+
+		fmt.Printf("Read %d bytes from TCP connection, writing to TUN...\n", len(message))
+		if _, err = ifce.Write(message); err != nil {
+			fmt.Printf("Error writing to interface: %v", err)
+			return
+		}
+	}
+}
+
+func listenIfce(conn net.Conn, ifce *water.Interface) {
+	fmt.Printf("Now listening on interface '%s'\n", ifce.Name())
+	packet := make([]byte, maxPacketSize)
+
+	for {
+		n, err := ifce.Read(packet)
+		if err != nil {
+			fmt.Printf("Error reading packet: %v\n", err)
+			return
+		}
+
+		fmt.Printf("Read %d bytes from '%s', writing to TCP...\n", n, ifce.Name())
+		if err = writePacket(conn, packet[:n]); err != nil {
+			fmt.Printf("Error writing packet to connection: %v\n", err)
+			return
+		}
+	}
+}
+
+func makeListener() (net.Listener, error) {
+	return net.Listen("tcp", ":"+os.Getenv("SERVER_GVPN_SERVER_PORT"))
 }

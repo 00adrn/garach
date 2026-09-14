@@ -55,7 +55,6 @@ func makeTun(ip string) (*water.Interface, error) {
 		return nil, err
 	}
 
-	fmt.Printf("Created TUN Interface with name: %s\n", ifce.Name())
 	out, err := cmd.Exec(fmt.Sprintf("sudo ip addr add %s/24 dev %s", ip, ifce.Name()))
 	if err != nil {
 		fmt.Printf("client TUN error adding IP address: %s\n", out)
@@ -77,14 +76,58 @@ func makeConnection() (net.Conn, error) {
 	return net.Dial("tcp", address)
 }
 
+func readPacket(conn net.Conn) ([]byte, error) {
+	header := make([]byte, 4)
+	if _, err := io.ReadFull(conn, header); err != nil {
+		return nil, err
+	}
+	length := binary.BigEndian.Uint32(header)
+	if length > maxPacketSize {
+		return nil, fmt.Errorf("packet too large: %d bytes", length)
+	}
+	packet := make([]byte, length)
+	_, err := io.ReadFull(conn, packet)
+	return packet, err
+}
+
+func writeAll(conn net.Conn, data []byte) error {
+	for len(data) > 0 {
+		written, err := conn.Write(data)
+		if err != nil {
+			return err
+		}
+		if written == 0 {
+			return io.ErrShortWrite
+		}
+		data = data[written:]
+	}
+	return nil
+}
+
+func writePacket(conn net.Conn, packet []byte) error {
+	if len(packet) > maxPacketSize {
+		return fmt.Errorf("packet too large: %d bytes", len(packet))
+	}
+
+	header := make([]byte, 4)
+	binary.BigEndian.PutUint32(header, uint32(len(packet)))
+	if err := writeAll(conn, header); err != nil {
+		return err
+	}
+	
+	return writeAll(conn, packet)
+}
+
 func listen(conn net.Conn, ifce *water.Interface) {
 	for {
-		packet, err := readPacket(conn)
+		message, err := readPacket(conn)
 		if err != nil {
 			fmt.Printf("client connection read error: %v\n", err)
 			return
 		}
-		if _, err = ifce.Write(packet); err != nil {
+
+		fmt.Printf("Read %d bytes from TCP connection, writing to TUN...\n", len(message))
+		if _, err = ifce.Write(message); err != nil {
 			fmt.Printf("client interface write error: %v\n", err)
 			return
 		}
@@ -102,50 +145,10 @@ func listenIfce(conn net.Conn, ifce *water.Interface) {
 			return
 		}
 
-		fmt.Printf("Read %d bytes from interface '%s'\n", n, ifce.Name())
+		fmt.Printf("Read %d bytes from '%s', writing to TCP...\n", n, ifce.Name())
 		if err = writePacket(conn, packet[:n]); err != nil {
 			fmt.Printf("client connection write error: %v", err)
 			return
 		}
 	}
-}
-
-func writePacket(conn net.Conn, packet []byte) error {
-	if len(packet) > maxPacketSize {
-		return fmt.Errorf("packet too large: %d bytes", len(packet))
-	}
-	header := make([]byte, 4)
-	binary.BigEndian.PutUint32(header, uint32(len(packet)))
-	if err := writeAll(conn, header); err != nil {
-		return err
-	}
-	return writeAll(conn, packet)
-}
-
-func writeAll(conn net.Conn, data []byte) error {
-	for len(data) > 0 {
-		written, err := conn.Write(data)
-		if err != nil {
-			return err
-		}
-		if written == 0 {
-			return io.ErrShortWrite
-		}
-		data = data[written:]
-	}
-	return nil
-}
-
-func readPacket(conn net.Conn) ([]byte, error) {
-	header := make([]byte, 4)
-	if _, err := io.ReadFull(conn, header); err != nil {
-		return nil, err
-	}
-	length := binary.BigEndian.Uint32(header)
-	if length > maxPacketSize {
-		return nil, fmt.Errorf("packet too large: %d bytes", length)
-	}
-	packet := make([]byte, length)
-	_, err := io.ReadFull(conn, packet)
-	return packet, err
 }
