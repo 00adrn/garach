@@ -3,12 +3,16 @@ package main
 import (
 	"fmt"
 	"flag"
+	"github.com/joho/godotenv"
 
 	"gvpn/client"
 	"gvpn/server"
 )
 
+
+
 func main() {
+	godotenv.Load(".env")
 	fmt.Println("Starting vpn service...")
 
 	mode := flag.String("mode", "server", "Mode to run the program in: \"server\" or \"client\"")

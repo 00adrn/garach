@@ -17,7 +17,7 @@ import (
 const maxPacketSize = 65535
 
 func Start() {
-	godotenv.Load()
+	godotenv.Load(".env")
 
 	listener, err := makeListener()
 	if err != nil {

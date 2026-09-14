@@ -17,7 +17,7 @@ import (
 const maxPacketSize = 65535
 
 func Start() {
-	godotenv.Load()
+	godotenv.Load(".env")
 
 	tun, err := makeTun("192.168.9.10")
 	if err != nil {
