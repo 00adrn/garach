@@ -1,20 +1,17 @@
 package client
 
 import (
-	"encoding/binary"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"os"
 
 	"gvpn/cmd"
+	"gvpn/dataManip"
 
 	"github.com/songgao/water"
 	"github.com/joho/godotenv"
 )
-
-const maxPacketSize = 65535
 
 func Start() {
 	godotenv.Load(".env")
@@ -76,51 +73,9 @@ func makeConnection() (net.Conn, error) {
 	return net.Dial("tcp", address)
 }
 
-func readPacket(conn net.Conn) ([]byte, error) {
-	header := make([]byte, 4)
-	if _, err := io.ReadFull(conn, header); err != nil {
-		return nil, err
-	}
-	length := binary.BigEndian.Uint32(header)
-	if length > maxPacketSize {
-		return nil, fmt.Errorf("packet too large: %d bytes", length)
-	}
-	packet := make([]byte, length)
-	_, err := io.ReadFull(conn, packet)
-	return packet, err
-}
-
-func writeAll(conn net.Conn, data []byte) error {
-	for len(data) > 0 {
-		written, err := conn.Write(data)
-		if err != nil {
-			return err
-		}
-		if written == 0 {
-			return io.ErrShortWrite
-		}
-		data = data[written:]
-	}
-	return nil
-}
-
-func writePacket(conn net.Conn, packet []byte) error {
-	if len(packet) > maxPacketSize {
-		return fmt.Errorf("packet too large: %d bytes", len(packet))
-	}
-
-	header := make([]byte, 4)
-	binary.BigEndian.PutUint32(header, uint32(len(packet)))
-	if err := writeAll(conn, header); err != nil {
-		return err
-	}
-	
-	return writeAll(conn, packet)
-}
-
 func listen(conn net.Conn, ifce *water.Interface) {
 	for {
-		message, err := readPacket(conn)
+		message, err := dataManip.ReadPacket(conn)
 		if err != nil {
 			fmt.Printf("client connection read error: %v\n", err)
 			return
@@ -136,7 +91,7 @@ func listen(conn net.Conn, ifce *water.Interface) {
 
 func listenIfce(conn net.Conn, ifce *water.Interface) {
 	fmt.Printf("Client interface '%s' now listening\n", ifce.Name())
-	packet := make([]byte, maxPacketSize)
+	packet := make([]byte, dataManip.MaxPacketSize)
 
 	for {
 		n, err := ifce.Read(packet)
@@ -146,7 +101,7 @@ func listenIfce(conn net.Conn, ifce *water.Interface) {
 		}
 
 		fmt.Printf("Read %d bytes from '%s', writing to TCP...\n", n, ifce.Name())
-		if err = writePacket(conn, packet[:n]); err != nil {
+		if err = dataManip.WritePacket(conn, packet[:n]); err != nil {
 			fmt.Printf("client connection write error: %v", err)
 			return
 		}
