@@ -36,5 +36,5 @@ func main() {
 			fmt.Println("Invalid mode. Use 'server' or 'client'.")
 	}
 
-	for {}
+	select { }
 }

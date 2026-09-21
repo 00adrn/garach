@@ -34,7 +34,7 @@ func Start() {
 	go listen(conn, tun)
 	go listenIfce(conn, tun)
 
-	for {}
+	select { }
 }
 
 func makeTun(ip string) (*water.Interface, error) {

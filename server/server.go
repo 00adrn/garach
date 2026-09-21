@@ -5,6 +5,8 @@ import (
 	"log"
 	"net"
 	"os"
+	"strings"
+	"slices"
 
 	"gvpn/cmd"
 	"gvpn/dataManip"
@@ -41,7 +43,7 @@ func Start() {
 	go listen(conn, tun)
 	go listenIfce(conn, tun)
 
-	for {}
+	select { }
 }
 
 func makeTun(ip string) (*water.Interface, error) {
@@ -111,4 +113,93 @@ func listenIfce(conn net.Conn, ifce *water.Interface) {
 
 func makeListener() (net.Listener, error) {
 	return net.Listen("tcp", ":"+os.Getenv("SERVER_GVPN_SERVER_PORT"))
+}
+
+func enableIPForwarding() error {
+	out, err := cmd.Exec("sudo sysctl -w net.ipv4.ip_forward=1")
+	if err != nil {
+		fmt.Printf("Error enabling IP forwarding... %s\n", out)
+		return err
+	}
+
+	return nil
+}
+
+func detectOutboundInterface() (string, error) {
+	out, err := cmd.Exec("ip route show default")
+	if err != nil {
+		fmt.Printf("Error detecting outbound interface... %s\n", out)
+		return "", err
+	}
+
+	tokens := strings.Fields(out)
+	outboundIfce := tokens[slices.Index(tokens, "dev")+1]
+
+	fmt.Printf("Detected outbound interface: %s\n", outboundIfce)
+
+	return outboundIfce, nil
+}
+
+
+func configureNAT(tunSubnet, outboundIfce string) error {
+	out, err := cmd.Exec(fmt.Sprintf("sudo iptables -t nat -C POSTROUTING -s %s -o %s -j MASQUERADE", tunSubnet, outboundIfce))
+	if err == nil {
+		return nil
+	}
+
+	out, err = cmd.Exec(fmt.Sprintf("sudo iptables -t nat -A POSTROUTING -s %s -o %s -j MASQUERADE", tunSubnet, outboundIfce))
+	if err != nil {
+		fmt.Printf("Error configuring NAT... %s\n", out)
+		return err
+	}
+
+	return nil
+}
+
+func removeNAT(tunSubnet, outboundIfce string) error {
+	out, err := cmd.Exec(fmt.Sprintf("sudo iptables -t nat -D POSTROUTING -s %s -o %s -j MASQUERADE", tunSubnet, outboundIfce))
+	if err != nil {
+		fmt.Printf("Error removing NAT... %s\n", out)
+		return err
+	}
+
+	return nil
+}
+
+func configureForwardingRules(tunIfce, outboundIfce string) error {
+	out, err := cmd.Exec(fmt.Sprintf("sudo iptables -C FORWARD -i %s -o %s -j ACCEPT", tunIfce, outboundIfce))
+	if err != nil {
+		out, err = cmd.Exec(fmt.Sprintf("sudo iptables -A FORWARD -i %s -o %s -j ACCEPT", tunIfce, outboundIfce))
+		if err != nil {
+			fmt.Printf("Error configuring forwarding rules... %s\n", out)
+			return err
+		}
+	}
+
+	out, err = cmd.Exec(fmt.Sprintf("sudo iptables -C FORWARD -i %s -o %s -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT", outboundIfce, tunIfce))
+	if err != nil {
+		out, err = cmd.Exec(fmt.Sprintf("sudo iptables -A FORWARD -i %s -o %s -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT", outboundIfce, tunIfce))
+		if err != nil {
+			fmt.Printf("Error configuring forwarding rules... %s\n", out)
+			return err
+		}
+	}
+
+	return nil
+}
+
+func removeForwardingRules(tunIfce, outboundIfce string) error {
+	out, err := cmd.Exec(fmt.Sprintf("sudo iptables -D FORWARD -i %s -o %s -j ACCEPT", tunIfce, outboundIfce))
+	if err != nil {
+		fmt.Printf("Error removing forwarding rules... %s\n", out)
+		return err
+	}
+
+	out, err = cmd.Exec(fmt.Sprintf("sudo iptables -D FORWARD -i %s -o %s -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT", outboundIfce, tunIfce))
+	if err != nil {
+		fmt.Printf("Error removing forwarding rules... %s\n", out)
+		return err
+	}
+	
+	return nil
 }
