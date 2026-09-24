@@ -1,19 +1,21 @@
 package server
 
 import (
+	"crypto/tls"
 	"fmt"
 	"log"
 	"net"
 	"os"
-	"strings"
 	"slices"
+	"strings"
 
 	"gvpn/cmd"
 	"gvpn/dataManip"
 
-	"github.com/songgao/water"
 	"github.com/joho/godotenv"
+	"github.com/songgao/water"
 )
+var tunMTU int = 1456
 
 func Start() {
 	godotenv.Load(".env")
@@ -202,4 +204,28 @@ func removeForwardingRules(tunIfce, outboundIfce string) error {
 	}
 	
 	return nil
+}
+
+func configureTunMTU(ice *water.Interface, mtu int) error {
+	out, err := cmd.Exec(fmt.Sprintf("sudo ip link set dev %s mtu %d", ice.Name(), mtu))
+	if err != nil {
+		fmt.Printf("Error configuring TUN MTU... %s\n", out)
+		return err
+	}
+	
+	return nil
+}
+
+func createTLSListener(address string, config *tls.Config) (net.Listener, error) {
+	listener, err := tls.Listen("tcp", address, config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create TLS listener: %v", err)
+	}
+
+	return listener, nil
+}
+
+func cleanup(tunSubnet, tunIfce, outboundIfce string) {
+	removeForwardingRules(tunIfce, outboundIfce)
+	removeNAT(tunSubnet, outboundIfce)
 }
