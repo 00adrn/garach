@@ -15,7 +15,11 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/songgao/water"
 )
-var tunMTU int = 1456
+
+var (
+	tunMTU 		int 	= 1456;
+	tunSubnet 	string 	= "192.168.9.0/24";
+)
 
 func Start() {
 	godotenv.Load(".env")
@@ -27,20 +31,42 @@ func Start() {
 	}
 	defer listener.Close()
 
+	err = enableIPForwarding()
+	if err != nil {
+		return
+	}
+
+	outboundIfce, err := detectOutboundInterface()
+	if err != nil {
+		return
+	}
+
 	conn, err := listener.Accept()
 	if err != nil {
-		fmt.Printf("Error accepting connection: %v\n", err)
 		return
 	}
 	defer conn.Close()
 
 	tun, err := makeTun("192.168.9.9")
 	if err != nil {
-		fmt.Printf("Error creating server TUN interface: %v\n", err)
 		return
 	}
-	fmt.Printf("Created TUN Interface with name: %s\n", tun.Name())
 	fmt.Printf("Server listening on %s\n", listener.Addr().String())
+
+	err = configureNAT(tunSubnet, outboundIfce)
+	if err != nil {
+		return
+	}
+	
+	err = configureForwardingRules(tun.Name(), outboundIfce)
+	if err != nil {
+		return
+	}
+
+	err = configureTunMTU(tun, tunMTU)
+	if err != nil {
+		return
+	}
 
 	go listen(conn, tun)
 	go listenIfce(conn, tun)
